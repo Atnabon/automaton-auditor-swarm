@@ -68,7 +68,7 @@ automaton-auditor-swarm/
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/automaton-auditor-swarm.git
+git clone https://github.com/atnabon/automaton-auditor-swarm.git
 cd automaton-auditor-swarm
 
 # Install dependencies with uv
