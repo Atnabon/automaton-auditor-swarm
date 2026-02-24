@@ -1,1 +1,1 @@
-# automaton-auditor-swarm
+# automaton-auditor
