@@ -1,0 +1,26 @@
+[project]
+name = "automaton-auditor-swarm"
+version = "0.1.0"
+description = "An agentic swarm that audits GitHub repositories and PDF reports using a dialectical judicial framework built on LangGraph."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain>=0.3.0",
+    "langchain-openai>=0.2.0",
+    "langgraph>=0.2.0",
+    "langsmith>=0.1.0",
+    "pydantic>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "pymupdf>=1.24.0",
+    "gitpython>=3.1.40",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
