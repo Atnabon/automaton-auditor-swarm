@@ -36,6 +36,10 @@ class Evidence(BaseModel):
         ...,
         description="Which detective produced this evidence.",
     )
+    goal: str = Field(
+        ...,
+        description="What this evidence was trying to establish or verify.",
+    )
     found: bool = Field(
         ...,
         description="Whether the expected artifact / pattern was located.",
@@ -47,6 +51,10 @@ class Evidence(BaseModel):
     location: str = Field(
         ...,
         description="File path, git ref, or logical location inside the target.",
+    )
+    rationale: str = Field(
+        ...,
+        description="Detective's reasoning for why this evidence supports the finding.",
     )
     confidence: float = Field(
         ...,
