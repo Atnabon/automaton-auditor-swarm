@@ -75,9 +75,11 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
                 "git_forensic_analysis": Evidence(
                     dimension_id="git_forensic_analysis",
                     detective="RepoInvestigator",
+                    goal="Verify the target repository is accessible and cloneable.",
                     found=False,
                     content=f"Clone failed: {clone.error}",
                     location=repo_url,
+                    rationale="Repository could not be cloned; all downstream analysis is impossible.",
                     confidence=1.0,
                 ),
             },
@@ -95,9 +97,15 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
     evidences["git_forensic_analysis"] = Evidence(
         dimension_id="git_forensic_analysis",
         detective="RepoInvestigator",
+        goal="Verify the repository has a meaningful commit history demonstrating incremental development.",
         found=progression_ok,
         content=json.dumps(commit_msgs[:50], indent=2),
         location="git log",
+        rationale=(
+            f"Extracted {len(commits)} commit(s). "
+            + ("Sufficient commit history found, indicating iterative development." if progression_ok
+               else "Fewer than 4 commits found — looks like a single-push dump rather than genuine progression.")
+        ),
         confidence=0.95 if progression_ok else 0.5,
     )
 
@@ -125,6 +133,7 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
             evidences["state_management_rigor"] = Evidence(
                 dimension_id="state_management_rigor",
                 detective="RepoInvestigator",
+                goal="Verify typed state definitions with Pydantic/TypedDict and Annotated reducers for parallel-safe writes.",
                 found=has_evidence_model and has_agent_state,
                 content=(
                     f"Pydantic BaseModel classes: {[c['name'] for c in pydantic_classes]}\n"
@@ -136,15 +145,22 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
                     f"--- Code Snippet ---\n{snippet}"
                 ),
                 location=state_file,
+                rationale=(
+                    "Evidence and AgentState classes found with Pydantic/TypedDict and operator import for reducers."
+                    if (has_evidence_model and has_agent_state)
+                    else "Missing one or more required state structures (Evidence, AgentState)."
+                ),
                 confidence=0.9 if (has_evidence_model and has_agent_state) else 0.4,
             )
     else:
         evidences["state_management_rigor"] = Evidence(
             dimension_id="state_management_rigor",
             detective="RepoInvestigator",
+            goal="Verify typed state definitions with Pydantic/TypedDict and Annotated reducers for parallel-safe writes.",
             found=False,
             content="No state.py file found in expected locations.",
             location="src/state.py",
+            rationale="src/state.py absent — no typed state definitions could be confirmed.",
             confidence=0.9,
         )
 
@@ -161,6 +177,7 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
                 evidences["graph_orchestration"] = Evidence(
                     dimension_id="graph_orchestration",
                     detective="RepoInvestigator",
+                    goal="Verify StateGraph wires detectives in parallel fan-out with a fan-in aggregation node.",
                     found=True,
                     content=(
                         f"Nodes: {graph_info['nodes']}\n"
@@ -170,24 +187,33 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
                         f"--- Code Snippet ---\n{snippet}"
                     ),
                     location=graph_file,
+                    rationale=(
+                        f"StateGraph found with {len(graph_info['nodes'])} node(s) and "
+                        f"{len(graph_info['edges'])} edge(s). "
+                        + ("Parallel fan-out pattern confirmed." if has_parallel else "Sequential wiring only — no fan-out.")
+                    ),
                     confidence=0.85,
                 )
             else:
                 evidences["graph_orchestration"] = Evidence(
                     dimension_id="graph_orchestration",
                     detective="RepoInvestigator",
+                    goal="Verify StateGraph wires detectives in parallel fan-out with a fan-in aggregation node.",
                     found=False,
                     content=f"No StateGraph instantiation found.\n\n--- Code ---\n{snippet}",
                     location=graph_file,
+                    rationale="graph.py exists but no StateGraph(...) instantiation was detected via AST.",
                     confidence=0.7,
                 )
     else:
         evidences["graph_orchestration"] = Evidence(
             dimension_id="graph_orchestration",
             detective="RepoInvestigator",
+            goal="Verify StateGraph wires detectives in parallel fan-out with a fan-in aggregation node.",
             found=False,
             content="No graph.py found.",
             location="src/graph.py",
+            rationale="Neither src/graph.py nor graph.py found in repository; no StateGraph wiring can be verified.",
             confidence=0.9,
         )
 
@@ -217,6 +243,7 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
     evidences["safe_tool_engineering"] = Evidence(
         dimension_id="safe_tool_engineering",
         detective="RepoInvestigator",
+        goal="Verify tool functions use sandboxed tempfiles, subprocess (not os.system), AST parsing, and proper error handling.",
         found=uses_tempfile and uses_subprocess and len(security_issues) == 0,
         content=(
             f"Uses tempfile: {uses_tempfile}\n"
@@ -226,6 +253,11 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
             f"--- Clone snippet ---\n{clone_snippet}"
         ),
         location="src/tools/",
+        rationale=(
+            "All external interactions are sandboxed and use subprocess; no os.system() calls detected."
+            if (uses_tempfile and uses_subprocess and len(security_issues) == 0)
+            else f"Safety issues detected: tempfile={uses_tempfile}, subprocess={uses_subprocess}, issues={len(security_issues)}."
+        ),
         confidence=0.85,
     )
 
@@ -241,6 +273,7 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
             evidences["structured_output_enforcement"] = Evidence(
                 dimension_id="structured_output_enforcement",
                 detective="RepoInvestigator",
+                goal="Verify judges invoke LLMs with .with_structured_output(JudicialOpinion) to guarantee typed JSON output.",
                 found=len(structured_calls) > 0 or len(bind_tools_calls) > 0,
                 content=(
                     f".with_structured_output() calls at lines: {structured_calls}\n"
@@ -248,15 +281,22 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
                     f"--- Code Snippet ---\n{snippet}"
                 ),
                 location=judges_file,
+                rationale=(
+                    f"Found {len(structured_calls)} .with_structured_output() and {len(bind_tools_calls)} .bind_tools() call(s) in judges.py."
+                    if (len(structured_calls) > 0 or len(bind_tools_calls) > 0)
+                    else "No .with_structured_output() or .bind_tools() calls found — judges do not enforce structured JSON output."
+                ),
                 confidence=0.85,
             )
     else:
         evidences["structured_output_enforcement"] = Evidence(
             dimension_id="structured_output_enforcement",
             detective="RepoInvestigator",
+            goal="Verify judges invoke LLMs with .with_structured_output(JudicialOpinion) to guarantee typed JSON output.",
             found=False,
             content="src/nodes/judges.py not found — judges not yet implemented.",
             location="src/nodes/judges.py",
+            rationale="judges.py absent; structured output enforcement cannot be verified at interim stage.",
             confidence=0.9,
         )
 
@@ -264,9 +304,11 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
     evidences["repo_file_listing"] = Evidence(
         dimension_id="repo_file_listing",
         detective="RepoInvestigator",
+        goal="Produce a complete file inventory of the repository for cross-referencing by DocAnalyst.",
         found=True,
         content=json.dumps(files, indent=2),
         location=repo_url,
+        rationale=f"Successfully enumerated {len(files)} files from the cloned repository.",
         confidence=1.0,
     )
 
@@ -299,17 +341,21 @@ def doc_analyst(state: AgentState) -> Dict[str, Any]:
         evidences["theoretical_depth"] = Evidence(
             dimension_id="theoretical_depth",
             detective="DocAnalyst",
+            goal="Assess whether the PDF report demonstrates deep theoretical understanding of LangGraph concepts.",
             found=False,
             content="No PDF path provided.",
             location="N/A",
+            rationale="PDF path was not supplied; theoretical depth analysis skipped.",
             confidence=1.0,
         )
         evidences["report_accuracy"] = Evidence(
             dimension_id="report_accuracy",
             detective="DocAnalyst",
+            goal="Verify that file paths and claims in the PDF report match the actual repository contents.",
             found=False,
             content="No PDF path provided.",
             location="N/A",
+            rationale="PDF path was not supplied; report accuracy cross-reference skipped.",
             confidence=1.0,
         )
         return {"evidences": evidences}
@@ -321,9 +367,11 @@ def doc_analyst(state: AgentState) -> Dict[str, Any]:
                 "theoretical_depth": Evidence(
                     dimension_id="theoretical_depth",
                     detective="DocAnalyst",
+                    goal="Assess whether the PDF report demonstrates deep theoretical understanding of LangGraph concepts.",
                     found=False,
                     content="Failed to ingest PDF.",
                     location=pdf_path,
+                    rationale="PDF ingestion failed; the file may be corrupted or in an unsupported format.",
                     confidence=1.0,
                 ),
             }
@@ -356,6 +404,7 @@ def doc_analyst(state: AgentState) -> Dict[str, Any]:
     evidences["theoretical_depth"] = Evidence(
         dimension_id="theoretical_depth",
         detective="DocAnalyst",
+        goal="Assess whether the PDF report demonstrates deep theoretical understanding of LangGraph concepts.",
         found=len(found_keywords) >= 3,
         content=(
             f"Keywords found: {found_keywords}\n"
@@ -363,6 +412,11 @@ def doc_analyst(state: AgentState) -> Dict[str, Any]:
             f"Contexts:\n{json.dumps(keyword_contexts, indent=2, default=str)}"
         ),
         location=pdf_path,
+        rationale=(
+            f"{len(found_keywords)}/{len(theory_keywords)} theory keywords found in PDF with substantive context."
+            + (" Sufficient theoretical depth indicated." if len(found_keywords) >= 3
+               else " Insufficient keyword coverage for theoretical depth.")
+        ),
         confidence=0.8 if len(found_keywords) >= 3 else 0.5,
     )
 
@@ -376,12 +430,17 @@ def doc_analyst(state: AgentState) -> Dict[str, Any]:
     evidences["report_accuracy"] = Evidence(
         dimension_id="report_accuracy",
         detective="DocAnalyst",
+        goal="Verify that file paths and claims in the PDF report match the actual repository contents.",
         found=len(mentioned_paths) > 0,
         content=(
             f"File paths mentioned in report: {json.dumps(mentioned_paths)}\n"
             f"[Cross-reference against repo pending — resolved by aggregator]"
         ),
         location=pdf_path,
+        rationale=(
+            f"Extracted {len(mentioned_paths)} file path reference(s) from PDF. Cross-reference deferred to aggregator."
+            if mentioned_paths else "No file path references found in PDF."
+        ),
         confidence=0.3,  # low until aggregator performs the cross-reference
     )
 
@@ -429,6 +488,7 @@ def evidence_aggregator(state: AgentState) -> Dict[str, Any]:
         updated["report_accuracy"] = Evidence(
             dimension_id="report_accuracy",
             detective="DocAnalyst",
+            goal="Verify that file paths and claims in the PDF report match the actual repository contents.",
             found=len(hallucinated_paths) == 0 and len(mentioned_paths) > 0,
             content=(
                 f"File paths mentioned in report: {mentioned_paths}\n"
@@ -437,6 +497,11 @@ def evidence_aggregator(state: AgentState) -> Dict[str, Any]:
                 f"Repo files available for cross-ref: {len(repo_files)}"
             ),
             location=report_acc.location,
+            rationale=(
+                f"{len(verified_paths)}/{len(mentioned_paths)} path(s) verified in repo. "
+                + (f"{len(hallucinated_paths)} hallucinated path(s) detected." if hallucinated_paths
+                   else "No hallucinated paths detected — report is accurate.")
+            ),
             confidence=0.9 if repo_files else 0.4,
         )
         logger.info(
