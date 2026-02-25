@@ -37,19 +37,20 @@ START
 automaton-auditor-swarm/
 ├── main.py                     # CLI entry point
 ├── pyproject.toml              # Dependencies (managed via uv)
-├── .env.example                # Required environment variables
+├── uv.lock                     # Locked dependency versions for reproducible installs
+├── .env.example                # Required environment variables (copy to .env)
 ├── rubric/
 │   └── week2_rubric.json       # Machine-readable evaluation rubric
 ├── src/
-│   ├── state.py                # Pydantic/TypedDict state definitions
-│   ├── graph.py                # StateGraph with fan-out/fan-in wiring
+│   ├── state.py                # Pydantic/TypedDict state definitions with Annotated reducers
+│   ├── graph.py                # StateGraph with fan-out/fan-in, conditional edges, checkpointing
 │   ├── nodes/
 │   │   ├── detectives.py       # RepoInvestigator & DocAnalyst nodes
-│   │   ├── judges.py           # Prosecutor, Defense, TechLead (stub)
-│   │   └── justice.py          # ChiefJustice synthesis (stub)
+│   │   ├── judges.py           # Prosecutor, Defense, TechLead (stub — final submission)
+│   │   └── justice.py          # ChiefJustice synthesis (stub — final submission)
 │   └── tools/
-│       ├── repo_tools.py       # Sandboxed git clone, AST analysis
-│       └── doc_tools.py        # PDF ingestion, chunked querying
+│       ├── repo_tools.py       # Sandboxed git clone, AST analysis, security scanning
+│       └── doc_tools.py        # PDF ingestion, paragraph chunking, RAG-lite query
 └── reports/
     └── interim_report.pdf      # Interim architectural report
 ```
@@ -58,29 +59,30 @@ automaton-auditor-swarm/
 
 ### Prerequisites
 
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/) (recommended) or pip
-- Git CLI
-- [Ollama](https://ollama.ai/) installed and running locally
+- **Python 3.11+** (check with `python --version`)
+- **[uv](https://docs.astral.sh/uv/)** — fast Python package manager (install: `curl -LsSf https://astral.sh/uv/install.sh | sh`)
+- Git CLI (`git --version`)
+- **[Ollama](https://ollama.ai/)** running locally
 - MiniMax M2.5 model pulled: `ollama pull minimax-m2.5:cloud`
 
 ### Installation
 
 ```bash
-# Clone the repository
+# 1. Clone the repository
 git clone https://github.com/atnabon/automaton-auditor-swarm.git
 cd automaton-auditor-swarm
 
-# Install dependencies with uv
+# 2. Install all dependencies from the lock file (exact versions, reproducible)
 uv sync
 
-# Or with pip
-pip install -e .
-
-# Configure environment variables
+# 3. Configure environment variables
 cp .env.example .env
-# Edit .env and add your API keys
+# Open .env in your editor and fill in GITHUB_TOKEN, LANGCHAIN_API_KEY, etc.
 ```
+
+> **Tip:** `uv sync` reads `uv.lock` to install the exact pinned dependency versions,
+> ensuring the same environment on every machine.  For a plain pip install (no lock):
+> `pip install -e .`
 
 ### Environment Variables
 
