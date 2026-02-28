@@ -7,21 +7,31 @@ An agentic swarm built on **LangGraph** that audits GitHub repositories and PDF 
 ```
 START
   │
-  ├──► RepoInvestigator (code detective)  ──┐
-  │                                          │
-  └──► DocAnalyst (document detective)     ──┤
-                                             │
-                          EvidenceAggregator  (fan-in sync)
-                                             │
-                   ┌─────────────────────────┤
-                   │            │             │
-              Prosecutor    Defense      TechLead     ← fan-out (TODO)
-                   │            │             │
-                   └─────────────────────────┤
-                                             │
-                                    ChiefJustice (TODO)
-                                             │
-                                            END
+  ├──► RepoInvestigator  ──┐
+  │                         │
+  ├──► DocAnalyst         ──┤
+  │                         │
+  └──► VisionInspector    ──┤
+                            │
+               EvidenceAggregator  (fan-in sync #1)
+                            │
+               [conditional: error? insufficient evidence?]
+                     ├── yes ──► END
+                     └── no  ──► Judicial Fan-Out
+                                   │
+                ┌──────────────────┼──────────────────┐
+                │                  │                   │
+           Prosecutor          Defense            TechLead
+                │                  │                   │
+                └──────────────────┼──────────────────┘
+                                   │
+                        JudicialSynchronizer  (fan-in sync #2)
+                                   │
+                        [conditional: no opinions?]
+                              ├── yes ──► END
+                              └── no  ──► ChiefJustice
+                                              │
+                                             END
 ```
 
 ### Key Design Decisions
@@ -43,16 +53,21 @@ automaton-auditor-swarm/
 │   └── week2_rubric.json       # Machine-readable evaluation rubric
 ├── src/
 │   ├── state.py                # Pydantic/TypedDict state definitions with Annotated reducers
-│   ├── graph.py                # StateGraph with fan-out/fan-in, conditional edges, checkpointing
+│   ├── graph.py                # StateGraph with 2x fan-out/fan-in, conditional edges, checkpointing
 │   ├── nodes/
-│   │   ├── detectives.py       # RepoInvestigator & DocAnalyst nodes
-│   │   ├── judges.py           # Prosecutor, Defense, TechLead (stub — final submission)
-│   │   └── justice.py          # ChiefJustice synthesis (stub — final submission)
+│   │   ├── detectives.py       # RepoInvestigator, DocAnalyst, VisionInspector, EvidenceAggregator
+│   │   ├── judges.py           # Prosecutor, Defense, TechLead with .with_structured_output()
+│   │   └── justice.py          # ChiefJustice deterministic synthesis with 4 named rules
 │   └── tools/
 │       ├── repo_tools.py       # Sandboxed git clone, AST analysis, security scanning
 │       └── doc_tools.py        # PDF ingestion, paragraph chunking, RAG-lite query
 └── reports/
-    └── interim_report.pdf      # Interim architectural report
+    ├── interim_report.md       # Final architectural report
+    ├── self_audit_report.md    # Self-audit: agent auditing its own repo
+    ├── peer_audit_report.md    # Peer-audit: our agent auditing peer's repo
+    ├── peer_received_report.md # Peer-received: peer's agent auditing our repo
+    ├── audit_report.md         # Runtime-generated report (produced by ChiefJustice)
+    └── video_script.md         # Demo video script (~3 min)
 ```
 
 ## Setup
@@ -97,63 +112,78 @@ cp .env.example .env
 
 ## Usage
 
-### Run the Detective Graph
+### Run the Full Auditor Pipeline
 
 ```bash
-# Audit a public repository (detective phase only)
+# Audit a public repository (full pipeline: detectives → judges → synthesis)
 python main.py https://github.com/user/target-repo
 
-# With a PDF report
+# With a PDF report for document analysis
 python main.py https://github.com/user/target-repo --pdf reports/their_report.pdf
 
-# Verbose output
+# Verbose output (debug logging)
 python main.py https://github.com/user/target-repo --pdf report.pdf -v
 ```
 
 ### Example Output
 
 ```
-🔍 Automaton Auditor Swarm — Detective Phase
-   Target repo : https://github.com/user/target-repo
-   PDF report  : reports/their_report.pdf
+======================================================================
+  AUTOMATON AUDITOR SWARM — Full Pipeline Execution
+======================================================================
+  Target repo : https://github.com/user/target-repo
+  PDF report  : reports/their_report.pdf
+  LangSmith   : ENABLED
+  Project     : automaton-auditor-swarm
+======================================================================
 
-📋 Evidence Summary (7 items):
+  DETECTIVE LAYER — Evidence Summary (8 items)
 
-  ✅ git_forensic_analysis
-     Location   : git log
-     Confidence : 95%
-     Preview    : ["abc1234 2025-02-20T10:00:00Z Initial project setup", ...]
+  ✅ git_forensic_analysis [FOUND]
+     Detective   : RepoInvestigator
+     Confidence  : 95%
 
-  ✅ state_management_rigor
-     Location   : src/state.py
-     Confidence : 90%
-     Preview    : Pydantic BaseModel classes: ['Evidence', 'JudicialOpinion']...
+  ✅ state_management_rigor [FOUND]
+     Detective   : RepoInvestigator
+     Confidence  : 95%
 
-  ✅ graph_orchestration
-     Location   : src/graph.py
-     Confidence : 85%
-     Preview    : Nodes: ['repo_investigator', 'doc_analyst', ...]...
+  JUDICIAL LAYER — Judge Opinions (30 opinions)
 
-✅ Detective phase complete.
+  --- graph_orchestration ---
+    Prosecutor   | Score: 4/5 | Two fan-out/fan-in patterns verified...
+    Defense      | Score: 5/5 | Full parallel execution confirmed...
+    TechLead     | Score: 5/5 | Graph topology is correct...
+
+  CHIEF JUSTICE — Final Audit Report
+
+  Overall Result: 43/50 (4.3/5.0 average)
+
+  Per-Criterion Scores:
+    git_forensic_analysis                    : 4/5
+    state_management_rigor                   : 5/5
+    graph_orchestration                      : 5/5 [DISSENT]
+    ...
+
+  📄 Full report written to: reports/audit_report.md
+  🔗 LangSmith trace: https://smith.langchain.com/...
+
+  ✅ Automaton Auditor Swarm — Pipeline Complete
 ```
 
-## Current Status (Interim)
+### Generated Reports
 
-### Implemented ✅
-- `src/state.py` — Full Pydantic/TypedDict state definitions with Annotated reducers
-- `src/tools/repo_tools.py` — Sandboxed git clone, git log extraction, AST-based analysis
-- `src/tools/doc_tools.py` — PDF ingestion, keyword search, path extraction
-- `src/nodes/detectives.py` — RepoInvestigator and DocAnalyst as LangGraph nodes
-- `src/graph.py` — StateGraph with detective fan-out/fan-in and checkpointing
-- `rubric/week2_rubric.json` — Full machine-readable rubric
+The pipeline produces the following report artifacts in `reports/`:
 
-### Planned for Final Submission 🔜
-- `src/nodes/judges.py` — Three parallel judge personas (Prosecutor, Defense, TechLead)
-- `src/nodes/justice.py` — ChiefJustice with deterministic synthesis rules
-- VisionInspector detective for diagram analysis
-- Conditional edges for error handling
-- Full Markdown report rendering
-- LangSmith trace integration
+| Report | Description |
+|--------|-------------|
+| `audit_report.md` | Runtime-generated report with executive summary, criterion breakdown, dissent summaries, remediation plan |
+| `self_audit_report.md` | Self-audit — agent run against its own repository |
+| `peer_audit_report.md` | Peer-audit — our agent's findings from auditing a peer's repo |
+| `peer_received_report.md` | Peer-received — report from a peer's agent auditing our repo |
+
+## LangSmith Tracing
+
+Set `LANGCHAIN_API_KEY` in your `.env` file to enable automatic tracing. All pipeline runs are traced to the `automaton-auditor-swarm` project in LangSmith. The trace shows all nodes: detectives (fan-out), evidence aggregation (fan-in), judges (fan-out), judicial sync (fan-in), and chief justice synthesis.
 
 ## License
 
