@@ -128,7 +128,14 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
             imports = find_imports(tree)
             has_operator = "operator" in imports
 
-            snippet = Path(full_path).read_text(encoding="utf-8")[:2000]
+            # Deeper check: look for Annotated usage to confirm reducers
+            snippet = Path(full_path).read_text(encoding="utf-8")
+            has_annotated_ior = "operator.ior" in snippet
+            has_annotated_add = "operator.add" in snippet
+            has_annotated_import = "Annotated" in snippet
+            has_reducers = has_operator and has_annotated_import and (has_annotated_ior or has_annotated_add)
+
+            snippet_preview = snippet[:2000]
 
             evidences["state_management_rigor"] = Evidence(
                 dimension_id="state_management_rigor",
@@ -139,18 +146,25 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
                     f"Pydantic BaseModel classes: {[c['name'] for c in pydantic_classes]}\n"
                     f"TypedDict classes: {[c['name'] for c in typeddict_classes]}\n"
                     f"Has operator import (for reducers): {has_operator}\n"
+                    f"Has Annotated import: {has_annotated_import}\n"
+                    f"Has operator.ior reducer: {has_annotated_ior}\n"
+                    f"Has operator.add reducer: {has_annotated_add}\n"
+                    f"Reducers confirmed: {has_reducers}\n"
                     f"Has Evidence model: {has_evidence_model}\n"
                     f"Has JudicialOpinion model: {has_judicial_opinion}\n"
                     f"Has AgentState: {has_agent_state}\n\n"
-                    f"--- Code Snippet ---\n{snippet}"
+                    f"--- Code Snippet ---\n{snippet_preview}"
                 ),
                 location=state_file,
                 rationale=(
-                    "Evidence and AgentState classes found with Pydantic/TypedDict and operator import for reducers."
+                    "Evidence and AgentState classes found with Pydantic/TypedDict. "
+                    + ("Annotated reducers (operator.ior for dicts, operator.add for lists) confirmed for parallel-safe writes."
+                       if has_reducers
+                       else "WARNING: operator import present but Annotated reducers not confirmed.")
                     if (has_evidence_model and has_agent_state)
                     else "Missing one or more required state structures (Evidence, AgentState)."
                 ),
-                confidence=0.9 if (has_evidence_model and has_agent_state) else 0.4,
+                confidence=0.95 if (has_evidence_model and has_agent_state and has_reducers) else (0.7 if (has_evidence_model and has_agent_state) else 0.4),
             )
     else:
         evidences["state_management_rigor"] = Evidence(
@@ -174,25 +188,57 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
             snippet = Path(full_path).read_text(encoding="utf-8")[:3000]
             if graph_info:
                 has_parallel = len(graph_info["nodes"]) >= 3
+
+                # Deep fan-out wiring analysis: count edges from the same source
+                fan_out_sources: Dict[str, List[str]] = {}
+                for src, dst in graph_info["edges"]:
+                    fan_out_sources.setdefault(src, []).append(dst)
+                fan_out_patterns = {
+                    src: dsts for src, dsts in fan_out_sources.items()
+                    if len(dsts) >= 2
+                }
+
+                # Detect fan-in: multiple edges to the same destination
+                fan_in_dests: Dict[str, List[str]] = {}
+                for src, dst in graph_info["edges"]:
+                    fan_in_dests.setdefault(dst, []).append(src)
+                fan_in_patterns = {
+                    dst: srcs for dst, srcs in fan_in_dests.items()
+                    if len(srcs) >= 2
+                }
+
+                has_two_fan_outs = len(fan_out_patterns) >= 2 or (
+                    len(fan_out_patterns) >= 1 and len(graph_info["conditional_edges"]) >= 1
+                )
+                has_conditional = len(graph_info["conditional_edges"]) > 0
+
                 evidences["graph_orchestration"] = Evidence(
                     dimension_id="graph_orchestration",
                     detective="RepoInvestigator",
-                    goal="Verify StateGraph wires detectives in parallel fan-out with a fan-in aggregation node.",
+                    goal="Verify StateGraph wires detectives and judges in parallel fan-out/fan-in with synchronization and conditional error edges.",
                     found=True,
                     content=(
                         f"Nodes: {graph_info['nodes']}\n"
                         f"Edges: {graph_info['edges']}\n"
                         f"Conditional edges at lines: {graph_info['conditional_edges']}\n"
-                        f"Parallel fan-out detected: {has_parallel}\n\n"
+                        f"Fan-out patterns (same source → multiple dests): {fan_out_patterns}\n"
+                        f"Fan-in patterns (multiple sources → same dest): {fan_in_patterns}\n"
+                        f"Two distinct fan-out/fan-in patterns: {has_two_fan_outs}\n"
+                        f"Has conditional error edges: {has_conditional}\n\n"
                         f"--- Code Snippet ---\n{snippet}"
                     ),
                     location=graph_file,
                     rationale=(
-                        f"StateGraph found with {len(graph_info['nodes'])} node(s) and "
-                        f"{len(graph_info['edges'])} edge(s). "
-                        + ("Parallel fan-out pattern confirmed." if has_parallel else "Sequential wiring only — no fan-out.")
+                        f"StateGraph found with {len(graph_info['nodes'])} node(s), "
+                        f"{len(graph_info['edges'])} edge(s), and "
+                        f"{len(graph_info['conditional_edges'])} conditional edge(s). "
+                        f"Fan-out sources: {list(fan_out_patterns.keys())}. "
+                        f"Fan-in sinks: {list(fan_in_patterns.keys())}. "
+                        + ("Two distinct parallel fan-out/fan-in patterns confirmed with conditional error handling."
+                           if has_two_fan_outs and has_conditional
+                           else "Parallel pattern detected but may not cover both detective and judicial layers.")
                     ),
-                    confidence=0.85,
+                    confidence=0.9 if (has_two_fan_outs and has_conditional) else 0.7,
                 )
             else:
                 evidences["graph_orchestration"] = Evidence(
@@ -319,6 +365,149 @@ def repo_investigator(state: AgentState) -> Dict[str, Any]:
         except Exception:
             pass
 
+    return {"evidences": evidences}
+
+
+# ---------------------------------------------------------------------------
+# VisionInspector — The Diagram Detective
+# ---------------------------------------------------------------------------
+
+
+def vision_inspector(state: AgentState) -> Dict[str, Any]:
+    """Extract and analyse images from the PDF report.
+
+    Produces Evidence for:
+      - swarm_visual (Architectural Diagram Analysis)
+
+    Uses image extraction from PyMuPDF and multimodal LLM analysis to classify
+    diagrams and verify they accurately represent the parallel architecture.
+    """
+    pdf_path: Optional[str] = state.get("pdf_path")
+    evidences: Dict[str, Evidence] = {}
+
+    if not pdf_path:
+        evidences["swarm_visual"] = Evidence(
+            dimension_id="swarm_visual",
+            detective="VisionInspector",
+            goal="Classify and analyse architectural diagrams from the PDF report.",
+            found=False,
+            content="No PDF path provided.",
+            location="N/A",
+            rationale="PDF path was not supplied; diagram analysis skipped.",
+            confidence=1.0,
+        )
+        return {"evidences": evidences}
+
+    pdf_doc = ingest_pdf(pdf_path, extract_images=True)
+    if pdf_doc is None:
+        evidences["swarm_visual"] = Evidence(
+            dimension_id="swarm_visual",
+            detective="VisionInspector",
+            goal="Classify and analyse architectural diagrams from the PDF report.",
+            found=False,
+            content="Failed to ingest PDF for image extraction.",
+            location=pdf_path,
+            rationale="PDF ingestion failed; diagram analysis cannot proceed.",
+            confidence=1.0,
+        )
+        return {"evidences": evidences}
+
+    images = pdf_doc.images
+    if not images:
+        # No images found — check if mermaid diagrams exist in text
+        full_text = get_full_text(pdf_doc)
+        has_mermaid = "graph TD" in full_text or "graph LR" in full_text or "flowchart" in full_text
+        has_parallel_keywords = ("parallel" in full_text.lower() and
+                                 ("fan-out" in full_text.lower() or "fan-in" in full_text.lower()))
+
+        evidences["swarm_visual"] = Evidence(
+            dimension_id="swarm_visual",
+            detective="VisionInspector",
+            goal="Classify and analyse architectural diagrams from the PDF report.",
+            found=has_mermaid,
+            content=(
+                f"No embedded images found in PDF ({pdf_doc.total_pages} pages).\n"
+                f"Mermaid diagram syntax detected in text: {has_mermaid}\n"
+                f"Parallel architecture keywords present: {has_parallel_keywords}\n"
+                + (f"Text-based diagram likely describes the architecture flow."
+                   if has_mermaid else "No diagram of any kind found in the report.")
+            ),
+            location=pdf_path,
+            rationale=(
+                "Mermaid-syntax diagrams found in report text — these describe the architecture "
+                "flow but are text-based, not rendered images."
+                if has_mermaid
+                else "No architectural diagrams (images or text-based) found in the PDF report."
+            ),
+            confidence=0.7 if has_mermaid else 0.9,
+        )
+        return {"evidences": evidences}
+
+    # --- Analyze extracted images ---
+    image_descriptions = []
+    for img in images:
+        desc = (
+            f"Image on page {img.page_number} (index {img.image_index}): "
+            f"{img.width}x{img.height} {img.format}"
+        )
+        image_descriptions.append(desc)
+
+    # Check PDF text for diagram-related context
+    full_text = get_full_text(pdf_doc)
+    has_parallel_flow = any(
+        kw in full_text.lower()
+        for kw in ["fan-out", "fan-in", "parallel", "concurrent", "prosecutor || defense"]
+    )
+    has_stategraph_ref = "stategraph" in full_text.lower() or "state graph" in full_text.lower()
+
+    # Use LLM for vision analysis if available (optional execution per rubric)
+    vision_analysis = "Vision LLM analysis: Implementation present but execution optional per rubric."
+    try:
+        if len(images) > 0:
+            # Attempt multimodal analysis with the first significant image
+            import base64
+            largest_img = max(images, key=lambda i: i.width * i.height)
+            img_b64 = base64.b64encode(largest_img.image_bytes).decode("utf-8")
+
+            vision_llm = ChatOllama(model="minimax-m2.5:cloud", temperature=0)
+            vision_prompt = (
+                "Analyze this architectural diagram from a software project report. "
+                "Classify it as one of: LangGraph State Machine diagram, sequence diagram, "
+                "or generic flowchart. Does it show parallel branches (fan-out/fan-in)? "
+                "Does it visualize: Detectives → Aggregation → Judges → Chief Justice?"
+            )
+            messages = [
+                {"role": "user", "content": [
+                    {"type": "text", "text": vision_prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:image/{largest_img.format};base64,{img_b64}"}},
+                ]}
+            ]
+            result = vision_llm.invoke(messages)
+            vision_analysis = result.content if hasattr(result, "content") else str(result)
+    except Exception as exc:
+        vision_analysis = f"Vision LLM analysis skipped (optional): {exc}"
+        logger.debug("Vision analysis error (non-fatal): %s", exc)
+
+    evidences["swarm_visual"] = Evidence(
+        dimension_id="swarm_visual",
+        detective="VisionInspector",
+        goal="Classify and analyse architectural diagrams from the PDF report.",
+        found=len(images) > 0,
+        content=(
+            f"Extracted {len(images)} image(s) from PDF:\n"
+            + "\n".join(image_descriptions) + "\n\n"
+            f"Parallel flow keywords in text: {has_parallel_flow}\n"
+            f"StateGraph reference in text: {has_stategraph_ref}\n\n"
+            f"Vision Analysis:\n{vision_analysis}"
+        ),
+        location=pdf_path,
+        rationale=(
+            f"Found {len(images)} image(s) in the PDF report. "
+            + ("Text references parallel fan-out/fan-in architecture." if has_parallel_flow
+               else "No clear parallel architecture flow described near diagrams.")
+        ),
+        confidence=0.75,
+    )
     return {"evidences": evidences}
 
 
@@ -519,6 +708,7 @@ def evidence_aggregator(state: AgentState) -> Dict[str, Any]:
         "structured_output_enforcement",
         "theoretical_depth",
         "report_accuracy",
+        "swarm_visual",
     ]
     all_evidences = {**evidences, **updated}
     present = [d for d in expected_dimensions if d in all_evidences]
